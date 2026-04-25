@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+venv/
+env/
+.env
+
+# ChromaDB (local vector store — do not commit)
+backend/chroma_db/
+
+# Generated map files
+backend/medical_desert_map.html
+
+# Node / Next.js
+node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/.env.local
+frontend/.env.production
+
+# Dataset (large Excel file)
+data/*.xlsx
+data/*.csv
+data/*.xls
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+
+# MLflow artifacts
+mlruns/
+mlflow.db

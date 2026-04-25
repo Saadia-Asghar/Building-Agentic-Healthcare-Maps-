@@ -1,0 +1,170 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-primary: #0a0f1e;
+  --bg-secondary: #111827;
+  --bg-card: #1a2235;
+  --bg-card-hover: #1e2d42;
+  --accent-primary: #3b82f6;
+  --accent-glow: rgba(59, 130, 246, 0.3);
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --border-color: rgba(255, 255, 255, 0.08);
+  --trust-high: #27ae60;
+  --trust-medium: #f39c12;
+  --trust-low: #e74c3c;
+  --trust-suspect: #8e44ad;
+  --desert-red: #c0392b;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Inter', sans-serif;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-secondary); }
+::-webkit-scrollbar-thumb { background: rgba(59, 130, 246, 0.4); border-radius: 3px; }
+
+/* Glass card */
+.glass-card {
+  background: rgba(26, 34, 53, 0.8);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+}
+
+/* Gradient text */
+.gradient-text {
+  background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 50%, #ec4899 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* India flag gradient line */
+.india-stripe {
+  height: 3px;
+  background: linear-gradient(90deg, #FF9933 33%, #FFFFFF 33% 66%, #138808 66%);
+}
+
+/* Trust score ring */
+.trust-ring {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Search glow */
+.search-glow:focus-within {
+  box-shadow: 0 0 0 3px var(--accent-glow), 0 0 30px rgba(59, 130, 246, 0.15);
+}
+
+/* Animations */
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-6px); }
+}
+
+@keyframes scan-line {
+  0% { transform: translateY(-100%); opacity: 0; }
+  50% { opacity: 1; }
+  100% { transform: translateY(100%); opacity: 0; }
+}
+
+@keyframes pulse-ring {
+  0% { transform: scale(0.8); opacity: 1; }
+  100% { transform: scale(2); opacity: 0; }
+}
+
+.animate-float { animation: float 4s ease-in-out infinite; }
+.animate-scan { animation: scan-line 2s ease-in-out infinite; }
+
+/* Desert alert pulse */
+.desert-pulse::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: inherit;
+  background: rgba(192, 57, 43, 0.3);
+  animation: pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Chain of thought expand */
+details > summary {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+details > summary::-webkit-details-marker { display: none; }
+
+details[open] summary .chevron {
+  transform: rotate(180deg);
+}
+
+.chevron {
+  transition: transform 0.2s ease;
+}
+
+/* Tag pills */
+.tag-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+/* Query examples */
+.example-chip {
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.example-chip:hover {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: rgba(59, 130, 246, 0.5);
+  transform: translateY(-1px);
+}
+
+/* Loading shimmer */
+@keyframes shimmer {
+  0% { background-position: -1000px 0; }
+  100% { background-position: 1000px 0; }
+}
+
+.shimmer {
+  animation: shimmer 2s infinite linear;
+  background: linear-gradient(
+    90deg,
+    rgba(255,255,255,0.03) 25%,
+    rgba(255,255,255,0.08) 50%,
+    rgba(255,255,255,0.03) 75%
+  );
+  background-size: 1000px 100%;
+}
+
+/* Map iframe */
+.map-frame {
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  overflow: hidden;
+}
