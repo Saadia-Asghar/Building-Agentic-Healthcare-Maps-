@@ -100,7 +100,7 @@ Description/Notes: {g('notes')}
         if len(docs) >= BATCH:
             col.add(documents=docs, metadatas=metas, ids=ids)
             docs, metas, ids = [], [], []
-            print(f"   ↳ Embedded {idx + 1:,} / {len(df):,} ...")
+            print(f"   >> Embedded {idx + 1:,} / {len(df):,} ...")
 
     if docs:
         col.add(documents=docs, metadatas=metas, ids=ids)
