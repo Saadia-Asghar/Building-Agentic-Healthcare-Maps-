@@ -5,20 +5,24 @@
 @tailwind utilities;
 
 :root {
-  --bg-primary: #0a0f1e;
-  --bg-secondary: #111827;
-  --bg-card: #1a2235;
-  --bg-card-hover: #1e2d42;
-  --accent-primary: #3b82f6;
-  --accent-glow: rgba(59, 130, 246, 0.3);
-  --text-primary: #f1f5f9;
-  --text-secondary: #94a3b8;
-  --border-color: rgba(255, 255, 255, 0.08);
-  --trust-high: #27ae60;
-  --trust-medium: #f39c12;
-  --trust-low: #e74c3c;
-  --trust-suspect: #8e44ad;
-  --desert-red: #c0392b;
+  --bg-primary: #061225;
+  --bg-secondary: #0b1f39;
+  --bg-card: #102949;
+  --bg-card-hover: #14345c;
+  --accent-primary: #1f8fff;
+  --accent-secondary: #00b894;
+  --accent-glow: rgba(31, 143, 255, 0.28);
+  --text-primary: #f4f8ff;
+  --text-secondary: #adbfdb;
+  --border-color: rgba(191, 219, 254, 0.22);
+  --trust-high: #17b26a;
+  --trust-medium: #f59e0b;
+  --trust-low: #ef4444;
+  --trust-suspect: #9b5de5;
+  --desert-red: #d92d20;
+  --saffron: #ff8a00;
+  --bharat-blue: #1267d6;
+  --mint: #1fbf9f;
 }
 
 * {
@@ -29,10 +33,17 @@
 
 body {
   font-family: 'Inter', sans-serif;
-  background-color: var(--bg-primary);
+  background:
+    radial-gradient(circle at 15% 10%, rgba(31, 143, 255, 0.15), transparent 38%),
+    radial-gradient(circle at 82% 20%, rgba(31, 191, 159, 0.14), transparent 42%),
+    linear-gradient(180deg, #061225 0%, #08182f 54%, #071223 100%);
   color: var(--text-primary);
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
 }
 
 /* Scrollbar */
@@ -42,15 +53,16 @@ body {
 
 /* Glass card */
 .glass-card {
-  background: rgba(26, 34, 53, 0.8);
-  backdrop-filter: blur(12px);
+  background: linear-gradient(160deg, rgba(16, 41, 73, 0.95), rgba(10, 29, 53, 0.94));
+  backdrop-filter: blur(14px);
   border: 1px solid var(--border-color);
-  border-radius: 16px;
+  border-radius: 18px;
+  box-shadow: 0 10px 28px rgba(2, 12, 30, 0.4);
 }
 
 /* Gradient text */
 .gradient-text {
-  background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 50%, #ec4899 100%);
+  background: linear-gradient(120deg, var(--saffron) 0%, #ffd166 18%, #7dd3fc 56%, var(--mint) 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -58,8 +70,9 @@ body {
 
 /* India flag gradient line */
 .india-stripe {
-  height: 3px;
-  background: linear-gradient(90deg, #FF9933 33%, #FFFFFF 33% 66%, #138808 66%);
+  height: 4px;
+  background: linear-gradient(90deg, var(--saffron) 0% 32%, #f8fbff 32% 68%, var(--mint) 68% 100%);
+  border-radius: 999px;
 }
 
 /* Trust score ring */
@@ -72,7 +85,7 @@ body {
 
 /* Search glow */
 .search-glow:focus-within {
-  box-shadow: 0 0 0 3px var(--accent-glow), 0 0 30px rgba(59, 130, 246, 0.15);
+  box-shadow: 0 0 0 3px var(--accent-glow), 0 0 34px rgba(31, 143, 255, 0.2);
 }
 
 /* Animations */
@@ -140,8 +153,8 @@ details[open] summary .chevron {
   transition: all 0.15s ease;
 }
 .example-chip:hover {
-  background: rgba(59, 130, 246, 0.15);
-  border-color: rgba(59, 130, 246, 0.5);
+  background: rgba(31, 143, 255, 0.2);
+  border-color: rgba(125, 211, 252, 0.6);
   transform: translateY(-1px);
 }
 
@@ -165,6 +178,151 @@ details[open] summary .chevron {
 /* Map iframe */
 .map-frame {
   border: 1px solid var(--border-color);
-  border-radius: 12px;
+  border-radius: 14px;
   overflow: hidden;
+  box-shadow: 0 12px 36px rgba(3, 14, 36, 0.36);
+}
+
+.gov-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(191, 219, 254, 0.35);
+  background: rgba(10, 30, 53, 0.6);
+  color: #c7d9f4;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.metric-tile {
+  border: 1px solid rgba(125, 211, 252, 0.18);
+  border-radius: 14px;
+  background: linear-gradient(165deg, rgba(16, 41, 73, 0.85), rgba(8, 26, 48, 0.82));
+  padding: 12px 14px;
+}
+
+.metric-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #8eb0d9;
+}
+
+.metric-value {
+  margin-top: 6px;
+  font-size: 20px;
+  font-weight: 700;
+  color: #eff6ff;
+}
+
+.layout-shell {
+  width: 100%;
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+.controls-panel {
+  border: 1px solid rgba(125, 211, 252, 0.22);
+  border-radius: 14px;
+  background: linear-gradient(165deg, rgba(13, 35, 62, 0.82), rgba(9, 27, 49, 0.78));
+  padding: 14px;
+}
+
+.smart-select {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid rgba(125, 211, 252, 0.35);
+  background: rgba(7, 24, 44, 0.85);
+  color: #d8e8ff;
+  font-size: 13px;
+  padding: 8px 10px;
+  outline: none;
+}
+
+.smart-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 10px;
+  border: 1px solid rgba(125, 211, 252, 0.35);
+  background: rgba(19, 55, 96, 0.72);
+  color: #d9e8ff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.recent-chip {
+  border-radius: 999px;
+  border: 1px solid rgba(125, 211, 252, 0.3);
+  background: rgba(16, 41, 73, 0.72);
+  color: #bad1f3;
+  font-size: 12px;
+  padding: 6px 11px;
+  max-width: 330px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toast {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 40;
+  border: 1px solid rgba(125, 211, 252, 0.4);
+  background: rgba(9, 34, 61, 0.9);
+  color: #dbebff;
+  border-radius: 10px;
+  font-size: 12px;
+  padding: 10px 12px;
+  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.35);
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  background: rgba(2, 12, 24, 0.62);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.onboarding-card {
+  width: 100%;
+  max-width: 520px;
+  border: 1px solid rgba(125, 211, 252, 0.35);
+  border-radius: 16px;
+  background: linear-gradient(165deg, rgba(11, 34, 61, 0.95), rgba(8, 24, 44, 0.95));
+  box-shadow: 0 20px 55px rgba(2, 10, 23, 0.6);
+  padding: 16px;
+  position: relative;
+}
+
+.close-btn {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  border: 1px solid rgba(125, 211, 252, 0.25);
+  background: rgba(12, 44, 77, 0.8);
+  color: #c6ddfb;
+  border-radius: 8px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+@media (max-width: 640px) {
+  .layout-shell {
+    padding: 0 14px;
+  }
 }

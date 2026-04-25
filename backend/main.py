@@ -99,6 +99,97 @@ def add_confidence_intervals(results: list) -> list:
     return results
 
 
+def assess_capabilities_from_text(text: str) -> dict:
+    low = (text or "").lower()
+    checks = {
+        "icu": ["icu", "ventilator", "oxygen", "monitor"],
+        "dialysis": ["dialysis", "haemodialysis", "nephrologist", "dialysis machine"],
+        "oncology": ["oncology", "oncologist", "chemotherapy", "radiation"],
+        "trauma": ["trauma", "emergency", "surgery", "operation theatre"],
+        "nicu": ["nicu", "neonatal", "incubator", "neonatologist"],
+    }
+    matrix = {}
+    for cap, tokens in checks.items():
+        hits = [t for t in tokens if t in low]
+        if len(hits) >= 2:
+            status = "present"
+        elif len(hits) == 1:
+            status = "ambiguous"
+        else:
+            status = "missing"
+        matrix[cap] = {
+            "status": status,
+            "evidence_found": hits,
+            "required_signals": tokens,
+        }
+    return matrix
+
+
+def contradiction_severity(flags: list) -> str:
+    if not flags:
+        return "none"
+    txt = " ".join(flags).lower()
+    critical_terms = ["icu", "nicu", "dialysis", "oncology", "surgery", "no evidence"]
+    major_terms = ["contradiction", "missing", "lacks"]
+    if any(t in txt for t in critical_terms) and len(flags) >= 2:
+        return "critical"
+    if len(flags) >= 2 or any(t in txt for t in major_terms):
+        return "major"
+    return "minor"
+
+
+def data_completeness_from_doc(doc: str) -> int:
+    if not doc:
+        return 0
+    expected = [
+        "facility:", "state:", "district:", "pin:", "type:",
+        "equipment:", "doctors/staff:", "specialties/services:",
+        "capacity/availability:", "description/notes:"
+    ]
+    low = doc.lower()
+    present = sum(1 for k in expected if k in low and len(low.split(k, 1)[1].strip()) > 3)
+    return int(round((present / len(expected)) * 100))
+
+
+def intervention_plan(desert: dict) -> dict:
+    if not desert or not desert.get("detected"):
+        return {
+            "priority": "monitor",
+            "actions": ["Maintain surveillance and validate quarterly."],
+            "impact_tier": "low",
+        }
+    gap = (desert.get("gap") or "").lower()
+    if "dialysis" in gap:
+        return {
+            "priority": "high",
+            "actions": [
+                "Deploy mobile dialysis unit within 30 days.",
+                "Create district referral MoU with nearest nephrology hub.",
+                "Train two local technicians on machine operations.",
+            ],
+            "impact_tier": "high",
+        }
+    if "icu" in gap or "nicu" in gap:
+        return {
+            "priority": "critical",
+            "actions": [
+                "Stand up stabilization center with oxygen and monitors.",
+                "Launch tele-ICU linkage to tertiary hospital.",
+                "Create emergency transfer protocol with ambulance SLA.",
+            ],
+            "impact_tier": "high",
+        }
+    return {
+        "priority": "high",
+        "actions": [
+            "Deploy targeted specialist outreach camp.",
+            "Procure missing high-acuity equipment.",
+            "Create district-level referral escalation matrix.",
+        ],
+        "impact_tier": "medium",
+    }
+
+
 def validate_results(results: list, candidates_text: str, query: str) -> list:
     """P2: Validator Agent — challenges each recommendation."""
     if not results:
@@ -166,6 +257,8 @@ class QueryRequest(BaseModel):
     query: str
     top_k: int = 8
     demo: bool = False
+    location_pin: str = ""
+    crisis_mode: str = "general"
 
 
 class TrustRequest(BaseModel):
@@ -178,6 +271,12 @@ class ExportRequest(BaseModel):
     top_results: list
     medical_desert: dict = {}
     summary: str = ""
+
+
+class WhatIfRequest(BaseModel):
+    district: str
+    capability: str
+    facilities_added: int = 1
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -203,6 +302,7 @@ def query_facilities(req: QueryRequest):
             results = col.query(
                 query_texts=[req.query],
                 n_results=min(req.top_k, total),
+                include=["documents", "metadatas", "distances"],
             )
         except Exception as e:
             return {
@@ -215,10 +315,11 @@ def query_facilities(req: QueryRequest):
             }
 
         # Build candidate text
+        retrieved_docs = results.get("documents", [[]])[0]
+        retrieved_meta = results.get("metadatas", [[]])[0]
+        doc_by_name = {}
         candidates = ""
-        for i, (doc, meta) in enumerate(zip(
-            results["documents"][0], results["metadatas"][0]
-        )):
+        for i, (doc, meta) in enumerate(zip(retrieved_docs, retrieved_meta)):
             candidates += (
                 f"\n--- FACILITY {i+1} ---\n"
                 f"Name: {meta.get('facility_name','?')}\n"
@@ -226,6 +327,9 @@ def query_facilities(req: QueryRequest):
                 f"| PIN: {meta.get('pin_code','?')}\n"
                 f"Notes:\n{doc}\n"
             )
+            key = (meta.get("facility_name") or "").strip().lower()
+            if key:
+                doc_by_name[key] = doc
 
         # Primary agent
         resp = get_ai().messages.create(
@@ -235,6 +339,8 @@ def query_facilities(req: QueryRequest):
 Read messy hospital records and tell the truth about what each facility CAN actually do.
 
 USER QUERY: {req.query}
+CRISIS MODE: {req.crisis_mode}
+LOCATION PIN (optional): {req.location_pin}
 
 CANDIDATES:
 {candidates}
@@ -283,13 +389,31 @@ Detect medical_desert if NO facility genuinely handles the need."""}],
             except Exception:
                 score = 50
             r["trust_score"] = max(0, min(100, score))
+            name_key = (r.get("facility_name") or "").strip().lower()
+            source_doc = doc_by_name.get(name_key, "")
+            r["capability_matrix"] = assess_capabilities_from_text(source_doc)
+            r["contradiction_severity"] = contradiction_severity(r.get("flags", []))
+            completeness = data_completeness_from_doc(source_doc)
+            r["data_completeness"] = completeness
+            idx = next(
+                (i for i, m in enumerate(retrieved_meta)
+                 if (m.get("facility_name", "").strip().lower() == name_key)),
+                999
+            )
+            semantic_rank_score = max(0, 100 - idx * 7)
+            pin_bonus = 8 if req.location_pin and req.location_pin == r.get("pin_code", "") else 0
+            r["blended_rank_score"] = int(round(
+                0.55 * r["trust_score"] + 0.20 * completeness + 0.20 * semantic_rank_score + pin_bonus
+            ))
+
+        top.sort(key=lambda x: x.get("blended_rank_score", 0), reverse=True)
 
         # P7: Confidence intervals
         top = add_confidence_intervals(top)
 
         data["top_results"] = top
         data["query"] = req.query
-        data["candidates_retrieved"] = len(results["documents"][0])
+        data["candidates_retrieved"] = len(retrieved_docs)
         data.setdefault("chain_of_thought", "")
         data.setdefault("summary", "")
         data.setdefault(
@@ -298,6 +422,19 @@ Detect medical_desert if NO facility genuinely handles the need."""}],
         )
         # Backward-compat for current frontend key.
         data["medical_desert_alert"] = data["medical_desert"]
+        endorsed = sum(1 for x in top if x.get("validator_endorses") is True)
+        data["agent_consensus"] = {
+            "endorsed": endorsed,
+            "total": len(top),
+            "agreement_score": int(round((endorsed / max(len(top), 1)) * 100)),
+            "needs_human_review": endorsed < max(1, math.ceil(len(top) * 0.6)),
+        }
+        data["intervention_plan"] = intervention_plan(data["medical_desert"])
+        if req.location_pin:
+            data["location_context"] = {
+                "input_pin": req.location_pin,
+                "pin_matched_results": sum(1 for x in top if x.get("pin_code") == req.location_pin),
+            }
 
         # MLflow metrics
         mlflow.log_metric("results_count", len(top))
@@ -460,6 +597,81 @@ Be specific, actionable, and honest about data quality concerns."""
 @app.get("/api/mlflow-url")
 def mlflow_url():
     return {"url": "http://localhost:5000", "command": "mlflow ui --port 5000"}
+
+
+@app.get("/api/district-readiness")
+def district_readiness(capability: str = "icu", top_n: int = 20):
+    """District readiness snapshot from embedded metadata."""
+    col = get_collection()
+    total = col.count()
+    if total == 0:
+        return {"capability": capability, "districts": [], "error": "Database empty"}
+    sample_n = min(max(top_n * 40, 200), total)
+    rows = col.get(limit=sample_n, include=["documents", "metadatas"])
+    docs = rows.get("documents", [])
+    metas = rows.get("metadatas", [])
+    by_district = {}
+    for doc, meta in zip(docs, metas):
+        district = (meta.get("district") or "unknown").strip()
+        state = (meta.get("state") or "unknown").strip()
+        key = f"{district}|{state}"
+        rec = by_district.setdefault(
+            key, {"district": district, "state": state, "total": 0, "capable": 0}
+        )
+        rec["total"] += 1
+        matrix = assess_capabilities_from_text(doc)
+        if matrix.get(capability, {}).get("status") == "present":
+            rec["capable"] += 1
+    out = []
+    for rec in by_district.values():
+        readiness = int(round((rec["capable"] / max(rec["total"], 1)) * 100))
+        rec["readiness_score"] = readiness
+        out.append(rec)
+    out.sort(key=lambda x: x["readiness_score"])
+    return {"capability": capability, "districts": out[:top_n]}
+
+
+@app.post("/api/what-if")
+def what_if_simulator(req: WhatIfRequest):
+    """Simple planning simulator for added facilities."""
+    col = get_collection()
+    total = col.count()
+    if total == 0:
+        return {"error": True, "message": "Database not ready. Run load_data.py first."}
+    rows = col.get(limit=min(1500, total), include=["documents", "metadatas"])
+    docs = rows.get("documents", [])
+    metas = rows.get("metadatas", [])
+    district_docs = [
+        d for d, m in zip(docs, metas)
+        if (m.get("district") or "").lower() == req.district.lower()
+    ]
+    base_total = len(district_docs)
+    if base_total == 0:
+        return {
+            "district": req.district,
+            "capability": req.capability,
+            "baseline_readiness": 0,
+            "projected_readiness": min(100, req.facilities_added * 12),
+            "delta": min(100, req.facilities_added * 12),
+            "assumptions": ["No baseline records found in sampled district data."],
+        }
+    present = sum(
+        1 for d in district_docs
+        if assess_capabilities_from_text(d).get(req.capability, {}).get("status") == "present"
+    )
+    baseline = int(round((present / base_total) * 100))
+    projected = int(round(((present + req.facilities_added) / (base_total + req.facilities_added)) * 100))
+    return {
+        "district": req.district,
+        "capability": req.capability,
+        "baseline_readiness": baseline,
+        "projected_readiness": projected,
+        "delta": projected - baseline,
+        "assumptions": [
+            "Each added facility is assumed fully capable for requested service.",
+            "Projection is directional and should be validated with geospatial demand data.",
+        ],
+    }
 
 
 @app.get("/api/demo-mode")

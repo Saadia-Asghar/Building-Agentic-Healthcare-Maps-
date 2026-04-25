@@ -1,10 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Search, MapPin, AlertTriangle, Shield, ChevronDown,
   Loader2, Activity, Brain, BarChart3, ExternalLink,
-  CheckCircle, XCircle, AlertCircle, Zap, Globe
+  CheckCircle, XCircle, AlertCircle, Zap, Globe, Landmark, Building2,
+  Bookmark, Share2, SlidersHorizontal, Clock3, Sparkles, X, Download
 } from 'lucide-react'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -19,6 +20,10 @@ interface FacilityResult {
   trust_reason: string
   flags: string[]
   data_quality: 'high' | 'medium' | 'low' | 'suspect'
+  contradiction_severity?: 'none' | 'minor' | 'major' | 'critical'
+  blended_rank_score?: number
+  data_completeness?: number
+  capability_matrix?: Record<string, { status: string; evidence_found: string[] }>
 }
 
 interface MedicalDesert {
@@ -43,7 +48,24 @@ interface AgentResponse {
   validator_check: ValidatorCheck
   summary: string
   candidates_retrieved: number
+  agent_consensus?: {
+    endorsed: number
+    total: number
+    agreement_score: number
+    needs_human_review: boolean
+  }
+  intervention_plan?: {
+    priority: string
+    actions: string[]
+    impact_tier: string
+  }
+  location_context?: {
+    input_pin: string
+    pin_matched_results: number
+  }
 }
+
+type SortMode = 'trust_desc' | 'trust_asc' | 'name_asc'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -183,7 +205,17 @@ function DesertAlert({ desert }: { desert: MedicalDesert }) {
   )
 }
 
-function FacilityCard({ result, index }: { result: FacilityResult; index: number }) {
+function FacilityCard({
+  result,
+  index,
+  isSaved,
+  onToggleSave,
+}: {
+  result: FacilityResult
+  index: number
+  isSaved: boolean
+  onToggleSave: (facilityName: string) => void
+}) {
   const cfg = getTrustConfig(result.trust_score)
   const Icon = cfg.icon
 
@@ -207,6 +239,18 @@ function FacilityCard({ result, index }: { result: FacilityResult; index: number
               <Icon size={10} />
               {cfg.label}
             </span>
+            <button
+              onClick={() => onToggleSave(result.facility_name)}
+              className="tag-pill"
+              style={{
+                background: isSaved ? 'rgba(251,191,36,0.18)' : 'rgba(255,255,255,0.05)',
+                color: isSaved ? '#fbbf24' : '#9fb4d1',
+                border: isSaved ? '1px solid rgba(251,191,36,0.45)' : '1px solid rgba(255,255,255,0.12)',
+              }}
+            >
+              <Bookmark size={10} />
+              {isSaved ? 'Saved' : 'Save'}
+            </button>
           </div>
 
           <div className="flex items-center gap-1 mb-3" style={{ color: '#64748b', fontSize: 13 }}>
@@ -237,6 +281,40 @@ function FacilityCard({ result, index }: { result: FacilityResult; index: number
             <span style={{ color: cfg.color, fontWeight: 600 }}>Score reason: </span>
             {result.trust_reason}
           </p>
+          <div className="flex flex-wrap gap-2 mt-2">
+            {typeof result.blended_rank_score === 'number' && (
+              <span className="tag-pill" style={{ background: 'rgba(56,189,248,0.14)', color: '#7dd3fc', border: '1px solid rgba(56,189,248,0.3)' }}>
+                Blended rank {result.blended_rank_score}
+              </span>
+            )}
+            {typeof result.data_completeness === 'number' && (
+              <span className="tag-pill" style={{ background: 'rgba(52,211,153,0.12)', color: '#6ee7b7', border: '1px solid rgba(52,211,153,0.3)' }}>
+                Data completeness {result.data_completeness}%
+              </span>
+            )}
+            {result.contradiction_severity && result.contradiction_severity !== 'none' && (
+              <span className="tag-pill" style={{ background: 'rgba(248,113,113,0.12)', color: '#fca5a5', border: '1px solid rgba(248,113,113,0.3)' }}>
+                Contradiction {result.contradiction_severity}
+              </span>
+            )}
+          </div>
+
+          {result.capability_matrix && (
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              {Object.entries(result.capability_matrix).map(([cap, info]) => (
+                <div key={cap} className="tag-pill" style={{
+                  justifyContent: 'space-between',
+                  width: '100%',
+                  background: info.status === 'present' ? 'rgba(16,185,129,0.12)' : info.status === 'ambiguous' ? 'rgba(245,158,11,0.14)' : 'rgba(239,68,68,0.12)',
+                  color: info.status === 'present' ? '#6ee7b7' : info.status === 'ambiguous' ? '#fcd34d' : '#fda4af',
+                  border: '1px solid rgba(148,163,184,0.25)',
+                }}>
+                  <span>{cap.toUpperCase()}</span>
+                  <span>{info.status}</span>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* Flags */}
           {result.flags?.length > 0 && (
@@ -280,10 +358,25 @@ function ValidatorPanel({ check }: { check: ValidatorCheck }) {
 export default function HomePage() {
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(false)
+  const [mapLoading, setMapLoading] = useState(false)
   const [result, setResult] = useState<AgentResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'results' | 'map'>('results')
   const [mapSrc, setMapSrc] = useState('/api/map-file')
+  const [minTrust, setMinTrust] = useState(0)
+  const [sortMode, setSortMode] = useState<SortMode>('trust_desc')
+  const [recentQueries, setRecentQueries] = useState<string[]>([])
+  const [savedFacilities, setSavedFacilities] = useState<string[]>([])
+  const [toast, setToast] = useState<string | null>(null)
+  const [showOnboarding, setShowOnboarding] = useState(false)
+  const [queryCount, setQueryCount] = useState(0)
+  const [locationPin, setLocationPin] = useState('')
+  const [crisisMode, setCrisisMode] = useState('general')
+  const [districtReadiness, setDistrictReadiness] = useState<Array<{ district: string; state: string; readiness_score: number }>>([])
+  const [simDistrict, setSimDistrict] = useState('')
+  const [simCapability, setSimCapability] = useState('icu')
+  const [simAdded, setSimAdded] = useState(1)
+  const [simResult, setSimResult] = useState<{ baseline_readiness: number; projected_readiness: number; delta: number } | null>(null)
 
   const loadMap = () => {
     setMapSrc(`/api/map-file?t=${Date.now()}`)
@@ -292,6 +385,85 @@ export default function HomePage() {
   useEffect(() => {
     loadMap()
   }, [])
+
+  useEffect(() => {
+    try {
+      const recent = localStorage.getItem('health_recent_queries')
+      const saved = localStorage.getItem('health_saved_facilities')
+      const seenGuide = localStorage.getItem('health_seen_guide')
+      const count = localStorage.getItem('health_query_count')
+      if (recent) setRecentQueries(JSON.parse(recent))
+      if (saved) setSavedFacilities(JSON.parse(saved))
+      if (count) setQueryCount(Number(count))
+      if (!seenGuide) setShowOnboarding(true)
+    } catch {
+      // no-op for localStorage parsing errors
+    }
+  }, [])
+
+  useEffect(() => {
+    localStorage.setItem('health_recent_queries', JSON.stringify(recentQueries))
+  }, [recentQueries])
+
+  useEffect(() => {
+    localStorage.setItem('health_saved_facilities', JSON.stringify(savedFacilities))
+  }, [savedFacilities])
+
+  useEffect(() => {
+    localStorage.setItem('health_query_count', String(queryCount))
+  }, [queryCount])
+
+  useEffect(() => {
+    if (!toast) return
+    const t = setTimeout(() => setToast(null), 2000)
+    return () => clearTimeout(t)
+  }, [toast])
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement)?.tagName === 'INPUT') return
+      if (e.key === '/') {
+        e.preventDefault()
+        const el = document.getElementById('main-query-input') as HTMLInputElement | null
+        el?.focus()
+      }
+      if (e.key.toLowerCase() === 'm') setActiveTab('map')
+      if (e.key.toLowerCase() === 'r') setActiveTab('results')
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
+
+  const updateRecentQueries = (q: string) => {
+    const trimmed = q.trim()
+    if (!trimmed) return
+    setRecentQueries(prev => [trimmed, ...prev.filter(x => x !== trimmed)].slice(0, 6))
+  }
+
+  const toggleSavedFacility = (facilityName: string) => {
+    setSavedFacilities(prev => {
+      const exists = prev.includes(facilityName)
+      if (exists) {
+        setToast('Removed from saved facilities')
+        return prev.filter(n => n !== facilityName)
+      }
+      setToast('Saved to quick shortlist')
+      return [facilityName, ...prev].slice(0, 20)
+    })
+  }
+
+  const generateMap = async () => {
+    setMapLoading(true)
+    try {
+      await fetch('/api/generate-map')
+      loadMap()
+      setActiveTab('map')
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setMapLoading(false)
+    }
+  }
 
   const handleQuery = async (q: string = query) => {
     if (!q.trim()) return
@@ -304,7 +476,7 @@ export default function HomePage() {
       const res = await fetch('/api/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: q, top_k: 10 }),
+        body: JSON.stringify({ query: q, top_k: 10, location_pin: locationPin, crisis_mode: crisisMode }),
       })
       if (!res.ok) {
         const err = await res.json()
@@ -312,8 +484,16 @@ export default function HomePage() {
       }
       const data = await res.json()
       setResult(data)
+      updateRecentQueries(q)
+      setQueryCount((n) => n + 1)
       loadMap()
       setActiveTab('results')
+      const capability = crisisMode === 'maternal' ? 'nicu' : crisisMode === 'trauma' ? 'trauma' : crisisMode === 'renal' ? 'dialysis' : 'icu'
+      const readRes = await fetch(`/api/district-readiness?capability=${capability}&top_n=6`)
+      if (readRes.ok) {
+        const readData = await readRes.json()
+        setDistrictReadiness(readData.districts || [])
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'An unexpected error occurred')
     } finally {
@@ -321,37 +501,151 @@ export default function HomePage() {
     }
   }
 
+  const displayedResults = useMemo(() => {
+    if (!result?.top_results) return []
+    const filtered = result.top_results.filter(r => (r.trust_score ?? 0) >= minTrust)
+    return filtered.sort((a, b) => {
+      if (sortMode === 'trust_asc') return a.trust_score - b.trust_score
+      if (sortMode === 'name_asc') return a.facility_name.localeCompare(b.facility_name)
+      return b.trust_score - a.trust_score
+    })
+  }, [result, minTrust, sortMode])
+
+  const shareSummary = async () => {
+    if (!result?.summary) return
+    const text = `Healthcare Intelligence Query: ${result.query}\n\nSummary:\n${result.summary}`
+    try {
+      await navigator.clipboard.writeText(text)
+      setToast('Summary copied to clipboard')
+    } catch {
+      setToast('Could not copy summary')
+    }
+  }
+
+  const exportResults = (format: 'json' | 'csv') => {
+    if (!result) return
+    const rows = displayedResults.map((r) => ({
+      facility_name: r.facility_name,
+      district: r.district,
+      state: r.state,
+      pin_code: r.pin_code,
+      trust_score: r.trust_score,
+      blended_rank_score: r.blended_rank_score ?? '',
+      contradiction_severity: r.contradiction_severity ?? '',
+      data_completeness: r.data_completeness ?? '',
+      trust_reason: r.trust_reason,
+      why_recommended: r.why_recommended,
+      flags: (r.flags || []).join(' | '),
+    }))
+
+    let blob: Blob
+    let filename: string
+    if (format === 'json') {
+      blob = new Blob([JSON.stringify({
+        query: result.query,
+        generated_at: new Date().toISOString(),
+        rows,
+      }, null, 2)], { type: 'application/json' })
+      filename = 'healthcare-results.json'
+    } else {
+      const header = Object.keys(rows[0] || {
+        facility_name: '',
+        district: '',
+        state: '',
+        pin_code: '',
+        trust_score: '',
+        blended_rank_score: '',
+        contradiction_severity: '',
+        data_completeness: '',
+        trust_reason: '',
+        why_recommended: '',
+        flags: '',
+      })
+      const csvRows = [header.join(',')].concat(
+        rows.map((row) => header.map((h) => {
+          const val = String((row as Record<string, unknown>)[h] ?? '')
+          return `"${val.replace(/"/g, '""')}"`
+        }).join(','))
+      )
+      blob = new Blob([csvRows.join('\n')], { type: 'text/csv' })
+      filename = 'healthcare-results.csv'
+    }
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
+    setToast(`Exported ${format.toUpperCase()} successfully`)
+  }
+
+  const copyShareLink = async () => {
+    const q = encodeURIComponent(query || result?.query || '')
+    const pin = encodeURIComponent(locationPin || '')
+    const crisis = encodeURIComponent(crisisMode || 'general')
+    const url = `${window.location.origin}?q=${q}&pin=${pin}&crisis=${crisis}`
+    try {
+      await navigator.clipboard.writeText(url)
+      setToast('Share link copied')
+    } catch {
+      setToast('Unable to copy share link')
+    }
+  }
+
+  const closeOnboarding = () => {
+    setShowOnboarding(false)
+    localStorage.setItem('health_seen_guide', '1')
+  }
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const q = params.get('q')
+    const pin = params.get('pin')
+    const crisis = params.get('crisis')
+    if (pin) setLocationPin(pin)
+    if (crisis) setCrisisMode(crisis)
+    if (q) {
+      setQuery(q)
+      handleQuery(q)
+    }
+    // intentionally run only on first mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-primary)' }}>
 
       {/* Header */}
-      <header style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', padding: '0 32px' }}>
-        <div style={{ maxWidth: 1200, margin: '0 auto', padding: '18px 0' }}
-          className="flex items-center justify-between">
+      <header style={{ borderBottom: '1px solid rgba(191,219,254,0.15)' }}>
+        <div className="layout-shell flex items-center justify-between"
+          style={{ paddingTop: 18, paddingBottom: 18 }}
+        >
           <div className="flex items-center gap-3">
-            <div className="p-2 rounded-xl" style={{ background: 'rgba(59,130,246,0.15)' }}>
-              <Activity size={22} style={{ color: '#3b82f6' }} />
+            <div className="p-2 rounded-xl" style={{ background: 'rgba(18,103,214,0.18)', border: '1px solid rgba(125,211,252,0.35)' }}>
+              <Activity size={22} style={{ color: '#7cc7ff' }} />
             </div>
             <div>
               <div style={{ fontSize: 16, fontWeight: 700, color: '#f1f5f9' }}>
                 Healthcare Intelligence Maps
               </div>
-              <div style={{ fontSize: 11, color: '#64748b' }}>
+              <div style={{ fontSize: 11, color: '#adbfdb' }}>
                 MIT Challenge 03 · Serving A Nation · 1.4 Billion Lives
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="india-stripe" style={{ width: 60, borderRadius: 2 }} />
-            <span style={{ fontSize: 12, color: '#64748b' }}>🇮🇳 India · 10k Facilities</span>
+          <div className="flex items-center gap-2">
+            <span className="gov-chip"><Landmark size={12} /> Public Impact</span>
+            <span className="gov-chip"><Building2 size={12} /> Private Rigor</span>
           </div>
         </div>
-        <div className="india-stripe" />
+        <div className="layout-shell" style={{ paddingBottom: 12 }}>
+          <div className="india-stripe" />
+        </div>
       </header>
 
       {/* Hero */}
-      <section style={{ padding: '60px 32px 40px', textAlign: 'center' }}>
-        <div style={{ maxWidth: 760, margin: '0 auto' }}>
+      <section style={{ padding: '48px 0 26px', textAlign: 'center' }}>
+        <div className="layout-shell" style={{ maxWidth: 980 }}>
           <div className="flex items-center justify-center gap-2 mb-4">
             <span className="tag-pill" style={{
               background: 'rgba(59,130,246,0.12)',
@@ -376,19 +670,58 @@ export default function HomePage() {
             <br />Healthcare Maps
           </h1>
 
-          <p style={{ fontSize: 17, color: '#94a3b8', lineHeight: 1.7, marginBottom: 40 }}>
+          <p style={{ fontSize: 17, color: '#bed0ea', lineHeight: 1.7, marginBottom: 34 }}>
             In India, a postal code determines a lifespan. This AI agent reads{' '}
             <strong style={{ color: '#f1f5f9' }}>10,000 messy hospital records</strong>,
             scores their trustworthiness, finds medical deserts, and answers complex
             natural language queries in seconds.
           </p>
 
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6 text-left">
+            <div className="metric-tile">
+              <div className="metric-label">Coverage</div>
+              <div className="metric-value">10K+</div>
+            </div>
+            <div className="metric-tile">
+              <div className="metric-label">Reasoning Mode</div>
+              <div className="metric-value" style={{ fontSize: 16, marginTop: 8 }}>Multi-Attribute</div>
+            </div>
+            <div className="metric-tile">
+              <div className="metric-label">Trust Output</div>
+              <div className="metric-value" style={{ fontSize: 16, marginTop: 8 }}>0-100 + CI</div>
+            </div>
+            <div className="metric-tile">
+              <div className="metric-label">Map Intelligence</div>
+              <div className="metric-value" style={{ fontSize: 16, marginTop: 8 }}>Desert Detection</div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6 text-left">
+            <div className="metric-tile">
+              <div className="metric-label">Queries this device</div>
+              <div className="metric-value">{queryCount}</div>
+            </div>
+            <div className="metric-tile">
+              <div className="metric-label">Saved facilities</div>
+              <div className="metric-value">{savedFacilities.length}</div>
+            </div>
+            <div className="metric-tile">
+              <div className="metric-label">Recent questions</div>
+              <div className="metric-value">{recentQueries.length}</div>
+            </div>
+            <div className="metric-tile">
+              <div className="metric-label">Shortcuts</div>
+              <div className="metric-value" style={{ fontSize: 14, marginTop: 8 }}>/ search · M map</div>
+            </div>
+          </div>
+
           {/* Search */}
           <div className="search-glow rounded-2xl relative"
-            style={{ border: '1px solid rgba(59,130,246,0.25)', background: 'rgba(26,34,53,0.9)' }}>
+            style={{ border: '1px solid rgba(125,211,252,0.25)', background: 'rgba(15,39,69,0.9)' }}>
             <div className="flex items-center gap-3 p-4">
               <Search size={20} style={{ color: '#3b82f6', flexShrink: 0 }} />
               <input
+                id="main-query-input"
                 type="text"
                 value={query}
                 onChange={e => setQuery(e.target.value)}
@@ -409,7 +742,7 @@ export default function HomePage() {
                 style={{
                   padding: '10px 22px',
                   borderRadius: 12,
-                  background: loading ? 'rgba(59,130,246,0.3)' : '#3b82f6',
+                  background: loading ? 'rgba(31,143,255,0.45)' : 'linear-gradient(120deg, #1f8fff, #19b996)',
                   color: '#fff',
                   border: 'none',
                   fontWeight: 600,
@@ -426,7 +759,58 @@ export default function HomePage() {
                 {loading ? 'Searching…' : 'Search'}
               </button>
             </div>
+            <div className="grid md:grid-cols-3 gap-2 px-4 pb-4">
+              <input
+                value={locationPin}
+                onChange={(e) => setLocationPin(e.target.value)}
+                placeholder="Optional PIN context (e.g., 854311)"
+                className="smart-select"
+              />
+              <select value={crisisMode} onChange={(e) => setCrisisMode(e.target.value)} className="smart-select">
+                <option value="general">General mode</option>
+                <option value="trauma">Emergency trauma</option>
+                <option value="maternal">Maternal / neonatal</option>
+                <option value="renal">Dialysis / renal</option>
+              </select>
+              <div className="gov-chip" style={{ justifyContent: 'center' }}>
+                Crisis profile: {crisisMode}
+              </div>
+            </div>
           </div>
+
+          <div className="flex items-center justify-center gap-2 flex-wrap mt-3">
+            <button
+              onClick={generateMap}
+              disabled={mapLoading}
+              className="gov-chip"
+              style={{ background: 'rgba(10, 43, 79, 0.85)', color: '#d7e8ff', cursor: mapLoading ? 'not-allowed' : 'pointer' }}
+            >
+              {mapLoading ? <Loader2 size={12} className="animate-spin" /> : <MapPin size={12} />}
+              {mapLoading ? 'Generating map...' : 'Generate latest crisis map'}
+            </button>
+            <span className="gov-chip" style={{ background: 'rgba(23,178,106,0.16)', color: '#bbf7d0' }}>
+              <CheckCircle size={12} /> Auditable citations enabled
+            </span>
+          </div>
+
+          {recentQueries.length > 0 && (
+            <div className="mt-4">
+              <div className="flex items-center justify-center gap-2 mb-2" style={{ color: '#9fc2eb', fontSize: 12 }}>
+                <Clock3 size={12} /> Recent queries
+              </div>
+              <div className="flex flex-wrap gap-2 justify-center">
+                {recentQueries.map((rq, i) => (
+                  <button
+                    key={`${rq}-${i}`}
+                    onClick={() => handleQuery(rq)}
+                    className="recent-chip"
+                  >
+                    {rq}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Example queries */}
           <div className="flex flex-wrap gap-2 justify-center mt-4">
@@ -455,7 +839,7 @@ export default function HomePage() {
       </section>
 
       {/* Results area */}
-      <section style={{ maxWidth: 1100, margin: '0 auto', padding: '0 32px 80px' }}>
+      <section className="layout-shell" style={{ maxWidth: 1120, paddingBottom: 80 }}>
 
         {/* Loading */}
         {loading && (
@@ -501,7 +885,7 @@ export default function HomePage() {
           <div className="animate-fade-in">
             {/* Stats bar */}
             <div className="flex items-center gap-4 flex-wrap mb-6 p-4 rounded-2xl"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              style={{ background: 'rgba(16,41,73,0.5)', border: '1px solid rgba(191,219,254,0.2)' }}>
               <div className="flex items-center gap-2">
                 <BarChart3 size={16} style={{ color: '#3b82f6' }} />
                 <span style={{ fontSize: 13, color: '#94a3b8' }}>
@@ -544,6 +928,87 @@ export default function HomePage() {
 
             {activeTab === 'results' && (
               <div>
+                <div className="controls-panel mb-4">
+                  <div className="flex items-center gap-2 mb-3" style={{ color: '#c7d9f4', fontSize: 12, fontWeight: 600 }}>
+                    <SlidersHorizontal size={14} /> Smart filters
+                  </div>
+                  <div className="grid md:grid-cols-3 gap-3">
+                    <div>
+                      <label style={{ fontSize: 12, color: '#9fc2eb', display: 'block', marginBottom: 6 }}>
+                        Minimum trust score: <strong>{minTrust}</strong>
+                      </label>
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        step={5}
+                        value={minTrust}
+                        onChange={(e) => setMinTrust(Number(e.target.value))}
+                        style={{ width: '100%' }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 12, color: '#9fc2eb', display: 'block', marginBottom: 6 }}>
+                        Sort by
+                      </label>
+                      <select
+                        value={sortMode}
+                        onChange={(e) => setSortMode(e.target.value as SortMode)}
+                        className="smart-select"
+                      >
+                        <option value="trust_desc">Trust score (high to low)</option>
+                        <option value="trust_asc">Trust score (low to high)</option>
+                        <option value="name_asc">Facility name (A-Z)</option>
+                      </select>
+                    </div>
+                    <div className="flex items-end">
+                      <button
+                        onClick={() => {
+                          setMinTrust(0)
+                          setSortMode('trust_desc')
+                        }}
+                        className="smart-btn"
+                      >
+                        Reset controls
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl p-4 mb-4" style={{ background: 'rgba(13,35,62,0.72)', border: '1px solid rgba(125,211,252,0.18)' }}>
+                  <p style={{ fontSize: 12, color: '#9fc2eb' }}>
+                    <strong style={{ color: '#dbeafe' }}>Interpretation guide:</strong> High trust scores represent stronger evidence consistency,
+                    while lower scores indicate contradictions or missing capability signals that require manual verification.
+                  </p>
+                </div>
+                {result.agent_consensus && (
+                  <div className="rounded-2xl p-4 mb-4" style={{ background: 'rgba(15,33,55,0.75)', border: '1px solid rgba(148,163,184,0.25)' }}>
+                    <p style={{ fontSize: 12, color: '#a5b4fc', fontWeight: 700, marginBottom: 6 }}>MULTI-AGENT CONSENSUS</p>
+                    <p style={{ fontSize: 13, color: '#cbd5e1' }}>
+                      Agreement score: <strong>{result.agent_consensus.agreement_score}%</strong> ({result.agent_consensus.endorsed}/{result.agent_consensus.total} endorsed)
+                    </p>
+                    {result.agent_consensus.needs_human_review && (
+                      <p style={{ fontSize: 12, color: '#fda4af', marginTop: 6 }}>Human review recommended due to low validator agreement.</p>
+                    )}
+                    {result.location_context && (
+                      <p style={{ fontSize: 12, color: '#7dd3fc', marginTop: 6 }}>
+                        PIN match context: {result.location_context.pin_matched_results} facilities match input PIN {result.location_context.input_pin}.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {result.intervention_plan && (
+                  <div className="rounded-2xl p-4 mb-4" style={{ background: 'rgba(6,44,35,0.45)', border: '1px solid rgba(52,211,153,0.3)' }}>
+                    <p style={{ fontSize: 12, color: '#6ee7b7', fontWeight: 700, marginBottom: 6 }}>
+                      INTERVENTION PLAN · {result.intervention_plan.priority.toUpperCase()} PRIORITY
+                    </p>
+                    <ul style={{ fontSize: 13, color: '#d1fae5', lineHeight: 1.7, paddingLeft: 18 }}>
+                      {result.intervention_plan.actions?.map((a, i) => <li key={i}>{a}</li>)}
+                    </ul>
+                  </div>
+                )}
+
                 {/* Medical Desert Alert */}
                 {result.medical_desert_alert && (
                   <DesertAlert desert={result.medical_desert_alert} />
@@ -558,9 +1023,100 @@ export default function HomePage() {
                 <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 16, color: '#f1f5f9' }}>
                   Top Recommended Facilities
                 </h2>
-                {result.top_results?.map((r, i) => (
-                  <FacilityCard key={i} result={r} index={i} />
-                ))}
+                <div className="flex items-center gap-2 flex-wrap mb-3">
+                  <button className="smart-btn" onClick={copyShareLink}>
+                    <Share2 size={12} /> Share link
+                  </button>
+                  <button className="smart-btn" onClick={() => exportResults('json')}>
+                    <Download size={12} /> Export JSON
+                  </button>
+                  <button className="smart-btn" onClick={() => exportResults('csv')}>
+                    <Download size={12} /> Export CSV
+                  </button>
+                </div>
+                {displayedResults.length === 0 ? (
+                  <div className="rounded-xl p-4" style={{ background: 'rgba(10,30,53,0.7)', border: '1px solid rgba(191,219,254,0.18)', color: '#9fc2eb' }}>
+                    No facilities match the current trust filter. Lower the threshold to view more options.
+                  </div>
+                ) : (
+                  displayedResults.map((r, i) => (
+                    <FacilityCard
+                      key={`${r.facility_name}-${i}`}
+                      result={r}
+                      index={i}
+                      isSaved={savedFacilities.includes(r.facility_name)}
+                      onToggleSave={toggleSavedFacility}
+                    />
+                  ))
+                )}
+
+                {savedFacilities.length > 0 && (
+                  <div className="rounded-2xl p-4 mt-4" style={{ background: 'rgba(16, 41, 73, 0.5)', border: '1px solid rgba(251,191,36,0.25)' }}>
+                    <p style={{ fontSize: 12, color: '#fcd34d', marginBottom: 8, fontWeight: 700 }}>
+                      QUICK SHORTLIST ({savedFacilities.length})
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {savedFacilities.slice(0, 8).map(name => (
+                        <span key={name} className="tag-pill" style={{ background: 'rgba(251,191,36,0.15)', color: '#fde68a', border: '1px solid rgba(251,191,36,0.35)' }}>
+                          <Bookmark size={10} /> {name}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {districtReadiness.length > 0 && (
+                  <div className="rounded-2xl p-4 mt-4" style={{ background: 'rgba(16, 41, 73, 0.5)', border: '1px solid rgba(125,211,252,0.25)' }}>
+                    <p style={{ fontSize: 12, color: '#7dd3fc', marginBottom: 8, fontWeight: 700 }}>
+                      DISTRICT READINESS SNAPSHOT
+                    </p>
+                    <div className="grid md:grid-cols-2 gap-2">
+                      {districtReadiness.map((d, i) => (
+                        <div key={`${d.district}-${i}`} className="tag-pill" style={{ justifyContent: 'space-between', width: '100%', background: 'rgba(8,29,51,0.6)', border: '1px solid rgba(125,211,252,0.2)', color: '#cbd5e1' }}>
+                          <span>{d.district}, {d.state}</span>
+                          <strong>{d.readiness_score}%</strong>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="rounded-2xl p-4 mt-4" style={{ background: 'rgba(19,30,60,0.65)', border: '1px solid rgba(167,139,250,0.25)' }}>
+                  <p style={{ fontSize: 12, color: '#c4b5fd', marginBottom: 8, fontWeight: 700 }}>WHAT-IF SIMULATOR</p>
+                  <div className="grid md:grid-cols-4 gap-2">
+                    <input className="smart-select" placeholder="District" value={simDistrict} onChange={(e) => setSimDistrict(e.target.value)} />
+                    <select className="smart-select" value={simCapability} onChange={(e) => setSimCapability(e.target.value)}>
+                      <option value="icu">ICU</option>
+                      <option value="dialysis">Dialysis</option>
+                      <option value="oncology">Oncology</option>
+                      <option value="nicu">NICU</option>
+                    </select>
+                    <input className="smart-select" type="number" min={1} value={simAdded} onChange={(e) => setSimAdded(Number(e.target.value || 1))} />
+                    <button
+                      className="smart-btn"
+                      onClick={async () => {
+                        const res = await fetch('/api/what-if', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ district: simDistrict, capability: simCapability, facilities_added: simAdded }),
+                        })
+                        const data = await res.json()
+                        setSimResult({
+                          baseline_readiness: data.baseline_readiness || 0,
+                          projected_readiness: data.projected_readiness || 0,
+                          delta: data.delta || 0,
+                        })
+                      }}
+                    >
+                      Simulate
+                    </button>
+                  </div>
+                  {simResult && (
+                    <p style={{ fontSize: 13, color: '#e9d5ff', marginTop: 8 }}>
+                      Baseline: <strong>{simResult.baseline_readiness}%</strong> {'->'} Projected: <strong>{simResult.projected_readiness}%</strong> (Delta {simResult.delta >= 0 ? '+' : ''}{simResult.delta}%)
+                    </p>
+                  )}
+                </div>
 
                 {/* Chain of thought */}
                 {result.chain_of_thought && (
@@ -578,9 +1134,14 @@ export default function HomePage() {
                     background: 'rgba(59,130,246,0.08)',
                     border: '1px solid rgba(59,130,246,0.2)',
                   }}>
-                    <p style={{ fontSize: 13, fontWeight: 700, color: '#60a5fa', marginBottom: 8 }}>
-                      📋 NGO PLANNER SUMMARY
-                    </p>
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <p style={{ fontSize: 13, fontWeight: 700, color: '#60a5fa' }}>
+                        📋 NGO PLANNER SUMMARY
+                      </p>
+                      <button onClick={shareSummary} className="smart-btn">
+                        <Share2 size={12} /> Copy summary
+                      </button>
+                    </div>
                     <p style={{ fontSize: 14, color: '#bae6fd', lineHeight: 1.7 }}>
                       {result.summary}
                     </p>
@@ -639,6 +1200,31 @@ export default function HomePage() {
           </div>
         )}
       </section>
+      {showOnboarding && (
+        <div className="overlay">
+          <div className="onboarding-card">
+            <button className="close-btn" onClick={closeOnboarding} aria-label="Close guide">
+              <X size={16} />
+            </button>
+            <div className="flex items-center gap-2 mb-2" style={{ color: '#d9e8ff', fontWeight: 700 }}>
+              <Sparkles size={15} /> Quick Start Guide
+            </div>
+            <p style={{ fontSize: 13, color: '#aac3e6', lineHeight: 1.6, marginBottom: 10 }}>
+              Ask a complex healthcare need, then use filters to refine trust score quality. Save promising facilities,
+              copy NGO summary, and switch to map for visual desert validation.
+            </p>
+            <div className="flex flex-wrap gap-2 mb-3">
+              <span className="gov-chip">/ Focus search</span>
+              <span className="gov-chip">R Results tab</span>
+              <span className="gov-chip">M Map tab</span>
+            </div>
+            <button className="smart-btn" onClick={closeOnboarding}>
+              Start exploring
+            </button>
+          </div>
+        </div>
+      )}
+      {toast && <div className="toast">{toast}</div>}
     </div>
   )
 }
