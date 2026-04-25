@@ -43,8 +43,8 @@ def get_col(row: dict, key: str, df_columns: list) -> str:
 def main(excel_path: str):
     print(f"Loading {excel_path} ...")
     df = pd.read_excel(excel_path)
-    print(f"✅ Loaded {len(df):,} rows")
-    print(f"📋 Columns: {list(df.columns)}\n")
+    print(f"[OK] Loaded {len(df):,} rows")
+    print(f"[INFO] Columns: {list(df.columns)}\n")
 
     df_cols = list(df.columns)
 
@@ -55,7 +55,7 @@ def main(excel_path: str):
 
     try:
         client.delete_collection("healthcare_facilities")
-        print("⚠  Deleted existing collection — re-embedding.\n")
+        print("[WARN] Deleted existing collection - re-embedding.\n")
     except Exception:
         pass
 
@@ -105,7 +105,7 @@ Description/Notes: {g('notes')}
     if docs:
         col.add(documents=docs, metadatas=metas, ids=ids)
 
-    print(f"\n✅ Done — {len(df):,} facilities embedded.")
+    print(f"\n[DONE] {len(df):,} facilities embedded.")
     print("   Next: uvicorn main:app --reload --port 8000\n")
 
 
