@@ -46,7 +46,7 @@ pip install -r backend/requirements.txt
 
 ```bash
 cp backend/.env.example backend/.env
-# Edit backend/.env and add your ANTHROPIC_API_KEY
+# Edit backend/.env and add your GEMINI_API_KEY
 ```
 
 ### 3. Add the Dataset
@@ -125,7 +125,7 @@ challenge03/
 - Handles messy Hindi-English notes, abbreviations, inconsistent naming
 - Returns top-10 candidates for every query
 
-### 2. Claude-Powered Reasoning Agent
+### 2. Gemini-Powered Reasoning Agent
 - Multi-attribute query resolution (not just keyword matching)
 - Step-by-step Chain of Thought visible to users
 - Row-level citations — every recommendation links to the exact sentence
@@ -180,7 +180,7 @@ challenge03/
 |------|---------|
 | Python + FastAPI | Backend agent & REST API |
 | ChromaDB | Vector database for semantic search |
-| Anthropic Claude | Reasoning, extraction, trust scoring |
+| Google Gemini API | Reasoning, extraction, trust scoring |
 | Sentence Transformers | Free local embeddings |
 | Folium | Interactive India map |
 | Next.js | Frontend UI |

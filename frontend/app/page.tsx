@@ -66,6 +66,7 @@ interface AgentResponse {
 }
 
 type SortMode = 'trust_desc' | 'trust_asc' | 'name_asc'
+type UserMode = 'patient' | 'ngo' | 'government'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -361,7 +362,7 @@ export default function HomePage() {
   const [mapLoading, setMapLoading] = useState(false)
   const [result, setResult] = useState<AgentResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<'results' | 'map'>('results')
+  const [activeTab, setActiveTab] = useState<'results' | 'map' | 'guide'>('results')
   const [mapSrc, setMapSrc] = useState('/api/map-file')
   const [minTrust, setMinTrust] = useState(0)
   const [sortMode, setSortMode] = useState<SortMode>('trust_desc')
@@ -377,6 +378,7 @@ export default function HomePage() {
   const [simCapability, setSimCapability] = useState('icu')
   const [simAdded, setSimAdded] = useState(1)
   const [simResult, setSimResult] = useState<{ baseline_readiness: number; projected_readiness: number; delta: number } | null>(null)
+  const [userMode, setUserMode] = useState<UserMode>('ngo')
 
   const loadMap = () => {
     setMapSrc(`/api/map-file?t=${Date.now()}`)
@@ -392,9 +394,11 @@ export default function HomePage() {
       const saved = localStorage.getItem('health_saved_facilities')
       const seenGuide = localStorage.getItem('health_seen_guide')
       const count = localStorage.getItem('health_query_count')
+      const role = localStorage.getItem('health_user_mode')
       if (recent) setRecentQueries(JSON.parse(recent))
       if (saved) setSavedFacilities(JSON.parse(saved))
       if (count) setQueryCount(Number(count))
+      if (role === 'patient' || role === 'ngo' || role === 'government') setUserMode(role)
       if (!seenGuide) setShowOnboarding(true)
     } catch {
       // no-op for localStorage parsing errors
@@ -414,6 +418,20 @@ export default function HomePage() {
   }, [queryCount])
 
   useEffect(() => {
+    localStorage.setItem('health_user_mode', userMode)
+    if (userMode === 'patient') {
+      setMinTrust(70)
+      setSortMode('trust_desc')
+    } else if (userMode === 'government') {
+      setMinTrust(50)
+      setSortMode('trust_desc')
+    } else {
+      setMinTrust(60)
+      setSortMode('trust_desc')
+    }
+  }, [userMode])
+
+  useEffect(() => {
     if (!toast) return
     const t = setTimeout(() => setToast(null), 2000)
     return () => clearTimeout(t)
@@ -429,6 +447,7 @@ export default function HomePage() {
       }
       if (e.key.toLowerCase() === 'm') setActiveTab('map')
       if (e.key.toLowerCase() === 'r') setActiveTab('results')
+      if (e.key.toLowerCase() === 'g') setActiveTab('guide')
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
@@ -716,6 +735,25 @@ export default function HomePage() {
           </div>
 
           {/* Search */}
+          <div className="flex items-center justify-center gap-2 flex-wrap mb-3">
+            <span className="gov-chip" style={{ background: 'rgba(16,41,73,0.85)' }}>Mode</span>
+            {(['patient', 'ngo', 'government'] as const).map((mode) => (
+              <button
+                key={mode}
+                onClick={() => setUserMode(mode)}
+                className="gov-chip"
+                style={{
+                  cursor: 'pointer',
+                  background: userMode === mode ? 'rgba(31,143,255,0.25)' : 'rgba(10,30,53,0.6)',
+                  color: userMode === mode ? '#dbeafe' : '#9fc2eb',
+                  border: userMode === mode ? '1px solid rgba(125,211,252,0.5)' : '1px solid rgba(191,219,254,0.25)',
+                }}
+              >
+                {mode === 'ngo' ? 'NGO Planner' : mode === 'government' ? 'Government Ops' : 'Patient'}
+              </button>
+            ))}
+          </div>
+
           <div className="search-glow rounded-2xl relative"
             style={{ border: '1px solid rgba(125,211,252,0.25)', background: 'rgba(15,39,69,0.9)' }}>
             <div className="flex items-center gap-3 p-4">
@@ -773,7 +811,7 @@ export default function HomePage() {
                 <option value="renal">Dialysis / renal</option>
               </select>
               <div className="gov-chip" style={{ justifyContent: 'center' }}>
-                Crisis profile: {crisisMode}
+                Crisis profile: {crisisMode} · Role: {userMode}
               </div>
             </div>
           </div>
@@ -911,8 +949,8 @@ export default function HomePage() {
             </div>
 
             {/* Tabs */}
-            <div className="flex gap-2 mb-6">
-              {(['results', 'map'] as const).map(tab => (
+            <div className="flex gap-2 mb-6 flex-wrap">
+              {(['results', 'map', 'guide'] as const).map(tab => (
                 <button key={tab} onClick={() => setActiveTab(tab)}
                   style={{
                     padding: '8px 20px', borderRadius: 10, border: 'none',
@@ -921,7 +959,7 @@ export default function HomePage() {
                     color: activeTab === tab ? '#fff' : '#94a3b8',
                     transition: 'all 0.2s ease',
                   }}>
-                  {tab === 'results' ? '🔍 Results' : '🗺️ Desert Map'}
+                  {tab === 'results' ? '🔍 Results' : tab === 'map' ? '🗺️ Desert Map' : '📘 Guide'}
                 </button>
               ))}
             </div>
@@ -1065,7 +1103,7 @@ export default function HomePage() {
                   </div>
                 )}
 
-                {districtReadiness.length > 0 && (
+                {districtReadiness.length > 0 && userMode !== 'patient' && (
                   <div className="rounded-2xl p-4 mt-4" style={{ background: 'rgba(16, 41, 73, 0.5)', border: '1px solid rgba(125,211,252,0.25)' }}>
                     <p style={{ fontSize: 12, color: '#7dd3fc', marginBottom: 8, fontWeight: 700 }}>
                       DISTRICT READINESS SNAPSHOT
@@ -1083,6 +1121,11 @@ export default function HomePage() {
 
                 <div className="rounded-2xl p-4 mt-4" style={{ background: 'rgba(19,30,60,0.65)', border: '1px solid rgba(167,139,250,0.25)' }}>
                   <p style={{ fontSize: 12, color: '#c4b5fd', marginBottom: 8, fontWeight: 700 }}>WHAT-IF SIMULATOR</p>
+                  {userMode === 'patient' && (
+                    <p style={{ fontSize: 12, color: '#cbd5e1', marginBottom: 8 }}>
+                      In Patient mode, this is optional planning-only output.
+                    </p>
+                  )}
                   <div className="grid md:grid-cols-4 gap-2">
                     <input className="smart-select" placeholder="District" value={simDistrict} onChange={(e) => setSimDistrict(e.target.value)} />
                     <select className="smart-select" value={simCapability} onChange={(e) => setSimCapability(e.target.value)}>
@@ -1184,6 +1227,68 @@ export default function HomePage() {
                   Generate a fresh map by posting to{' '}
                   <code style={{ color: '#60a5fa' }}>GET /api/generate-map</code> before loading this view.
                 </p>
+              </div>
+            )}
+            {activeTab === 'guide' && (
+              <div className="rounded-2xl p-5" style={{ background: 'rgba(16,41,73,0.55)', border: '1px solid rgba(191,219,254,0.22)' }}>
+                <h2 style={{ fontSize: 20, fontWeight: 800, color: '#e2ecff', marginBottom: 8 }}>
+                  Platform Purpose & Workflow
+                </h2>
+                <p style={{ color: '#b6c9e8', fontSize: 14, lineHeight: 1.7, marginBottom: 14 }}>
+                  This system reduces discovery-to-care time by finding capable facilities from messy records, scoring trust,
+                  flagging contradictions, and surfacing medical deserts with actionable interventions.
+                </p>
+
+                <div className="grid md:grid-cols-2 gap-4">
+                  <div className="controls-panel">
+                    <p style={{ fontSize: 12, color: '#93c5fd', fontWeight: 700, marginBottom: 8 }}>HOW IT WORKS (PIPELINE)</p>
+                    <ol style={{ fontSize: 13, color: '#dbeafe', lineHeight: 1.8, paddingLeft: 18 }}>
+                      <li>Embeds 10k+ facility records into ChromaDB.</li>
+                      <li>Retrieves best candidates via semantic search.</li>
+                      <li>Gemini reasons over evidence and returns structured JSON.</li>
+                      <li>Validator pass checks consistency and adjusts trust.</li>
+                      <li>Blended rank score combines trust, completeness, and relevance.</li>
+                      <li>Desert detection and intervention planning are generated.</li>
+                    </ol>
+                  </div>
+
+                  <div className="controls-panel">
+                    <p style={{ fontSize: 12, color: '#93c5fd', fontWeight: 700, marginBottom: 8 }}>HOW TO USE (OPERATIONS)</p>
+                    <ol style={{ fontSize: 13, color: '#dbeafe', lineHeight: 1.8, paddingLeft: 18 }}>
+                      <li>Enter query and optional PIN/crisis mode.</li>
+                      <li>Review consensus, trust, contradiction severity, and evidence.</li>
+                      <li>Use filters to set minimum trust threshold.</li>
+                      <li>Save shortlist facilities and open map tab for regional context.</li>
+                      <li>Run what-if simulation for district planning.</li>
+                      <li>Export JSON/CSV for NGOs and policy briefs.</li>
+                    </ol>
+                  </div>
+
+                  <div className="controls-panel">
+                    <p style={{ fontSize: 12, color: '#93c5fd', fontWeight: 700, marginBottom: 8 }}>KEY TABS & FEATURES</p>
+                    <ul style={{ fontSize: 13, color: '#dbeafe', lineHeight: 1.8, paddingLeft: 18 }}>
+                      <li>Results Tab: Ranked facilities, capability matrix, trust scoring.</li>
+                      <li>Map Tab: Medical desert visualization and risk exploration.</li>
+                      <li>Guide Tab: End-user onboarding and operational workflow.</li>
+                      <li>Role Mode: Patient / NGO Planner / Government Ops.</li>
+                      <li>Advanced: Consensus scoring, intervention recommendations.</li>
+                      <li>Retention: Recent queries, saved shortlist, keyboard shortcuts.</li>
+                    </ul>
+                  </div>
+
+                  <div className="controls-panel">
+                    <p style={{ fontSize: 12, color: '#93c5fd', fontWeight: 700, marginBottom: 8 }}>KEYBOARD SHORTCUTS</p>
+                    <div className="flex flex-wrap gap-2">
+                      <span className="gov-chip">/ Search focus</span>
+                      <span className="gov-chip">R Results</span>
+                      <span className="gov-chip">M Map</span>
+                      <span className="gov-chip">G Guide</span>
+                    </div>
+                    <p style={{ color: '#a8bfdc', fontSize: 12, marginTop: 10 }}>
+                      Tip: Use crisis mode with PIN input for emergency triage context.
+                    </p>
+                  </div>
+                </div>
               </div>
             )}
           </div>

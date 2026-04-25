@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-import anthropic
+import google.generativeai as genai
 import chromadb
 from chromadb.utils import embedding_functions
 from dotenv import load_dotenv
@@ -38,13 +38,30 @@ _ai = None
 _col = None
 _demo_col = None
 _demo_mode = False
+LLM_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 
 
 def get_ai():
     global _ai
     if _ai is None:
-        _ai = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        api_key = os.getenv("GEMINI_API_KEY", "").strip()
+        if not api_key:
+            raise RuntimeError("Missing GEMINI_API_KEY in backend/.env")
+        genai.configure(api_key=api_key)
+        _ai = genai.GenerativeModel(LLM_MODEL)
     return _ai
+
+
+def llm_generate(prompt: str) -> str:
+    model = get_ai()
+    resp = model.generate_content(
+        prompt,
+        generation_config={
+            "temperature": 0.2,
+            "max_output_tokens": 2800,
+        },
+    )
+    return (resp.text or "").strip()
 
 
 def get_collection(demo=False):
@@ -222,12 +239,7 @@ Return ONLY valid JSON array (same length as input, in same order):
   }}
 ]"""
 
-    resp = get_ai().messages.create(
-        model="claude-opus-4-5",
-        max_tokens=800,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    raw = resp.content[0].text
+    raw = llm_generate(prompt)
     # Parse array
     try:
         arr = json.loads(raw)
@@ -283,7 +295,7 @@ class WhatIfRequest(BaseModel):
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "agent": "Aarogya v2.0", "model": "claude-opus-4-5"}
+    return {"status": "ok", "agent": "Aarogya v2.0", "model": LLM_MODEL, "provider": "gemini"}
 
 
 @app.post("/api/query")
@@ -332,10 +344,7 @@ def query_facilities(req: QueryRequest):
                 doc_by_name[key] = doc
 
         # Primary agent
-        resp = get_ai().messages.create(
-            model="claude-opus-4-5",
-            max_tokens=2500,
-            messages=[{"role": "user", "content": f"""You are an expert healthcare analyst for rural India.
+        raw = llm_generate(f"""You are an expert healthcare analyst for rural India.
 Read messy hospital records and tell the truth about what each facility CAN actually do.
 
 USER QUERY: {req.query}
@@ -372,10 +381,9 @@ Return ONLY valid JSON:
 
 Scoring: 90+=verified, 70-89=likely, 50-69=uncertain, <50=suspicious.
 Flag contradictions: claims X but no evidence of Y.
-Detect medical_desert if NO facility genuinely handles the need."""}],
-        )
+Detect medical_desert if NO facility genuinely handles the need.""")
 
-        data = parse_json(resp.content[0].text)
+        data = parse_json(raw)
         top = data.get("top_results", [])
 
         # P2: Validator Agent
@@ -464,10 +472,7 @@ def trust_score(req: TrustRequest):
         if claim in notes_lower and not any(e in notes_lower for e in evidence)
     ]
 
-    resp = get_ai().messages.create(
-        model="claude-opus-4-5",
-        max_tokens=400,
-        messages=[{"role": "user", "content": f"""Score trustworthiness of this Indian medical facility.
+    raw = llm_generate(f"""Score trustworthiness of this Indian medical facility.
 Facility: {req.facility_name}
 Notes: {req.notes}
 Pre-detected flags: {auto_flags}
@@ -479,9 +484,8 @@ Return ONLY JSON:
   "flags": ["specific issues"],
   "data_quality": "high|medium|low|suspect",
   "recommendation": "trust|verify|avoid"
-}}"""}],
-    )
-    result = parse_json(resp.content[0].text)
+}}""")
+    result = parse_json(raw)
     for f in auto_flags:
         if f not in result.get("flags", []):
             result.setdefault("flags", []).append(f)
@@ -586,12 +590,8 @@ Structure the report with these sections:
 
 Be specific, actionable, and honest about data quality concerns."""
 
-    resp = get_ai().messages.create(
-        model="claude-opus-4-5",
-        max_tokens=800,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return {"report": resp.content[0].text}
+    report = llm_generate(prompt)
+    return {"report": report}
 
 
 @app.get("/api/mlflow-url")

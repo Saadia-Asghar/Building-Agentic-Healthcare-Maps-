@@ -44,6 +44,9 @@ def build_map(output_path: str = None):
         sample = col.get(limit=500, include=["metadatas"])
         cluster = MarkerCluster(name="Facilities").add_to(m)
 
+        district_scores = {}
+        district_counts = {}
+
         for meta in sample["metadatas"]:
             lat = meta.get("latitude", "")
             lng = meta.get("longitude", "")
@@ -57,6 +60,8 @@ def build_map(output_path: str = None):
             name = meta.get("facility_name", "Unknown")
             state = meta.get("state", "")
             district = meta.get("district", "")
+            dkey = f"{district}|{state}".strip("|")
+            district_counts[dkey] = district_counts.get(dkey, 0) + 1
 
             folium.CircleMarker(
                 location=[lat, lng],
@@ -69,6 +74,52 @@ def build_map(output_path: str = None):
                     f"<b>{name}</b><br>{district}, {state}", max_width=220
                 ),
             ).add_to(cluster)
+
+        # District readiness circles (proxy choropleth-style layer)
+        for meta in sample["metadatas"]:
+            district = meta.get("district", "")
+            state = meta.get("state", "")
+            dkey = f"{district}|{state}".strip("|")
+            if dkey not in district_scores:
+                district_scores[dkey] = {"score": 0, "lat": None, "lng": None}
+            trust_proxy = 70
+            # trust proxy from available metadata patterns
+            if str(meta.get("facility_type", "")).lower().find("primary") >= 0:
+                trust_proxy = 55
+            if str(meta.get("facility_type", "")).lower().find("hospital") >= 0:
+                trust_proxy = 75
+            district_scores[dkey]["score"] += trust_proxy
+            try:
+                lat = float(meta.get("latitude", ""))
+                lng = float(meta.get("longitude", ""))
+                if district_scores[dkey]["lat"] is None and (-90 <= lat <= 90 and -180 <= lng <= 180):
+                    district_scores[dkey]["lat"] = lat
+                    district_scores[dkey]["lng"] = lng
+            except (ValueError, TypeError):
+                pass
+
+        readiness_layer = folium.FeatureGroup(name="District Readiness Overlay", show=True)
+        for dkey, agg in district_scores.items():
+            if agg["lat"] is None:
+                continue
+            count = max(1, district_counts.get(dkey, 1))
+            score = int(round(agg["score"] / count))
+            color = "#22c55e" if score >= 75 else "#f59e0b" if score >= 60 else "#ef4444"
+            folium.Circle(
+                location=[agg["lat"], agg["lng"]],
+                radius=28000,
+                color=color,
+                fill=True,
+                fill_color=color,
+                fill_opacity=0.22,
+                weight=1.5,
+                tooltip=f"Readiness: {dkey} ({score})",
+                popup=folium.Popup(
+                    f"<b>{dkey}</b><br>Readiness score: {score}/100<br>Sampled facilities: {count}",
+                    max_width=280,
+                ),
+            ).add_to(readiness_layer)
+        readiness_layer.add_to(m)
 
     except Exception as e:
         print(f"⚠  Could not load ChromaDB facilities: {e}")
@@ -111,6 +162,10 @@ def build_map(output_path: str = None):
       <div><span style="color:#22c55e">●</span> Facility (mapped)</div>
       <div style="margin-top:6px"><span style="color:#ef4444">◉</span> Critical Desert</div>
       <div style="margin-top:4px"><span style="color:#eab308">◉</span> High-Risk Desert</div>
+      <hr style="border-color:#2e3540;margin:8px 0;">
+      <div><span style="color:#22c55e">◉</span> High District Readiness</div>
+      <div style="margin-top:4px"><span style="color:#f59e0b">◉</span> Medium District Readiness</div>
+      <div style="margin-top:4px"><span style="color:#ef4444">◉</span> Low District Readiness</div>
     </div>
     """
     m.get_root().html.add_child(folium.Element(legend))
