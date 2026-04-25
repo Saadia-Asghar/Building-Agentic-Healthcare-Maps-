@@ -24,6 +24,15 @@ interface FacilityResult {
   blended_rank_score?: number
   data_completeness?: number
   capability_matrix?: Record<string, { status: string; evidence_found: string[] }>
+  distance_proxy?: number
+  estimated_travel_minutes?: number | null
+  evidence_drilldown?: {
+    why_recommended: string
+    trust_reason: string
+    flags: string[]
+    capability_matrix: Record<string, { status: string; evidence_found: string[] }>
+    source_excerpt: string
+  }
 }
 
 interface MedicalDesert {
@@ -63,6 +72,18 @@ interface AgentResponse {
     input_pin: string
     pin_matched_results: number
   }
+}
+
+interface MapSearchResult {
+  facility_name: string
+  state: string
+  district: string
+  pin_code: string
+  latitude?: number | null
+  longitude?: number | null
+  search_score: number
+  data_completeness: number
+  source_excerpt: string
 }
 
 type SortMode = 'trust_desc' | 'trust_asc' | 'name_asc'
@@ -211,11 +232,13 @@ function FacilityCard({
   index,
   isSaved,
   onToggleSave,
+  onOpenEvidence,
 }: {
   result: FacilityResult
   index: number
   isSaved: boolean
   onToggleSave: (facilityName: string) => void
+  onOpenEvidence: (result: FacilityResult) => void
 }) {
   const cfg = getTrustConfig(result.trust_score)
   const Icon = cfg.icon
@@ -262,6 +285,15 @@ function FacilityCard({
               color: '#94a3b8',
               border: '1px solid rgba(255,255,255,0.1)'
             }}>PIN {result.pin_code}</span>
+            {typeof result.estimated_travel_minutes === 'number' && (
+              <span className="ml-2 tag-pill" style={{
+                background: 'rgba(59,130,246,0.12)',
+                color: '#7dd3fc',
+                border: '1px solid rgba(125,211,252,0.35)'
+              }}>
+                ~{result.estimated_travel_minutes} min
+              </span>
+            )}
           </div>
 
           {/* Citation */}
@@ -316,6 +348,12 @@ function FacilityCard({
               ))}
             </div>
           )}
+
+          <div className="mt-3">
+            <button className="smart-btn" onClick={() => onOpenEvidence(result)}>
+              Open evidence drilldown
+            </button>
+          </div>
 
           {/* Flags */}
           {result.flags?.length > 0 && (
@@ -379,6 +417,11 @@ export default function HomePage() {
   const [simAdded, setSimAdded] = useState(1)
   const [simResult, setSimResult] = useState<{ baseline_readiness: number; projected_readiness: number; delta: number } | null>(null)
   const [userMode, setUserMode] = useState<UserMode>('ngo')
+  const [evidenceFocus, setEvidenceFocus] = useState<FacilityResult | null>(null)
+  const [mapSearchLoading, setMapSearchLoading] = useState(false)
+  const [mapSearchQuery, setMapSearchQuery] = useState('')
+  const [mapSearchCapability, setMapSearchCapability] = useState('any')
+  const [mapSearchResults, setMapSearchResults] = useState<MapSearchResult[]>([])
 
   const loadMap = () => {
     setMapSrc(`/api/map-file?t=${Date.now()}`)
@@ -614,6 +657,31 @@ export default function HomePage() {
   const closeOnboarding = () => {
     setShowOnboarding(false)
     localStorage.setItem('health_seen_guide', '1')
+  }
+
+  const runMapSearch = async () => {
+    setMapSearchLoading(true)
+    try {
+      const res = await fetch('/api/map-search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: mapSearchQuery,
+          capability: mapSearchCapability,
+          state: '',
+          district: '',
+          pin: locationPin,
+          limit: 12,
+        }),
+      })
+      const data = await res.json()
+      setMapSearchResults(data.results || [])
+      setToast(`Map search returned ${data.total || 0} results`)
+    } catch {
+      setToast('Map search failed')
+    } finally {
+      setMapSearchLoading(false)
+    }
   }
 
   useEffect(() => {
@@ -1084,6 +1152,7 @@ export default function HomePage() {
                       index={i}
                       isSaved={savedFacilities.includes(r.facility_name)}
                       onToggleSave={toggleSavedFacility}
+                      onOpenEvidence={setEvidenceFocus}
                     />
                   ))
                 )}
@@ -1190,11 +1259,85 @@ export default function HomePage() {
                     </p>
                   </div>
                 )}
+
+                {evidenceFocus && (
+                  <div className="rounded-2xl p-4 mt-4" style={{ background: 'rgba(8,29,51,0.78)', border: '1px solid rgba(125,211,252,0.25)' }}>
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <p style={{ fontSize: 13, color: '#93c5fd', fontWeight: 700 }}>
+                        EVIDENCE DRILLDOWN · {evidenceFocus.facility_name}
+                      </p>
+                      <button className="smart-btn" onClick={() => setEvidenceFocus(null)}>Close</button>
+                    </div>
+                    <p style={{ fontSize: 12, color: '#cbd5e1', marginBottom: 8 }}>
+                      <strong>Why recommended:</strong> {evidenceFocus.evidence_drilldown?.why_recommended || evidenceFocus.why_recommended}
+                    </p>
+                    <p style={{ fontSize: 12, color: '#cbd5e1', marginBottom: 8 }}>
+                      <strong>Trust reason:</strong> {evidenceFocus.evidence_drilldown?.trust_reason || evidenceFocus.trust_reason}
+                    </p>
+                    {(evidenceFocus.evidence_drilldown?.flags || evidenceFocus.flags || []).length > 0 && (
+                      <p style={{ fontSize: 12, color: '#fda4af', marginBottom: 8 }}>
+                        <strong>Flags:</strong> {(evidenceFocus.evidence_drilldown?.flags || evidenceFocus.flags).join(' | ')}
+                      </p>
+                    )}
+                    <pre style={{
+                      whiteSpace: 'pre-wrap',
+                      fontSize: 12,
+                      color: '#bfdbfe',
+                      background: 'rgba(2,6,23,0.45)',
+                      border: '1px solid rgba(148,163,184,0.25)',
+                      borderRadius: 10,
+                      padding: 10,
+                      maxHeight: 220,
+                      overflow: 'auto',
+                    }}>
+                      {evidenceFocus.evidence_drilldown?.source_excerpt || 'No source excerpt available.'}
+                    </pre>
+                  </div>
+                )}
               </div>
             )}
 
             {activeTab === 'map' && (
               <div>
+                <div className="controls-panel mb-4">
+                  <p style={{ fontSize: 12, color: '#93c5fd', fontWeight: 700, marginBottom: 8 }}>MAP SEARCH ENGINE</p>
+                  <div className="grid md:grid-cols-4 gap-2">
+                    <input
+                      className="smart-select"
+                      value={mapSearchQuery}
+                      onChange={(e) => setMapSearchQuery(e.target.value)}
+                      placeholder="Search services, equipment, specialties"
+                    />
+                    <select className="smart-select" value={mapSearchCapability} onChange={(e) => setMapSearchCapability(e.target.value)}>
+                      <option value="any">Any capability</option>
+                      <option value="icu">ICU</option>
+                      <option value="dialysis">Dialysis</option>
+                      <option value="oncology">Oncology</option>
+                      <option value="trauma">Trauma</option>
+                      <option value="nicu">NICU</option>
+                    </select>
+                    <input
+                      className="smart-select"
+                      value={locationPin}
+                      onChange={(e) => setLocationPin(e.target.value)}
+                      placeholder="Optional PIN filter"
+                    />
+                    <button className="smart-btn" onClick={runMapSearch} disabled={mapSearchLoading}>
+                      {mapSearchLoading ? <Loader2 size={12} className="animate-spin" /> : <Search size={12} />}
+                      Run map search
+                    </button>
+                  </div>
+                  {mapSearchResults.length > 0 && (
+                    <div className="grid md:grid-cols-2 gap-2 mt-3">
+                      {mapSearchResults.slice(0, 8).map((r, i) => (
+                        <div key={`${r.facility_name}-${i}`} className="tag-pill" style={{ justifyContent: 'space-between', width: '100%', background: 'rgba(8,29,51,0.6)', border: '1px solid rgba(125,211,252,0.2)', color: '#cbd5e1' }}>
+                          <span>{r.facility_name} ({r.district})</span>
+                          <strong>{r.search_score}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <div className="flex items-center justify-between mb-4">
                   <h2 style={{ fontSize: 18, fontWeight: 700, color: '#f1f5f9' }}>
                     🗺️ Medical Desert Map

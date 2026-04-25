@@ -168,6 +168,18 @@ def data_completeness_from_doc(doc: str) -> int:
     return int(round((present / len(expected)) * 100))
 
 
+def pin_distance(pin_a: str, pin_b: str) -> int:
+    """Cheap proxy distance when lat/lng is unavailable."""
+    if not pin_a or not pin_b:
+        return 999999
+    try:
+        a = int(re.sub(r"\D", "", str(pin_a))[:6] or "0")
+        b = int(re.sub(r"\D", "", str(pin_b))[:6] or "0")
+        return abs(a - b)
+    except Exception:
+        return 999999
+
+
 def intervention_plan(desert: dict) -> dict:
     if not desert or not desert.get("detected"):
         return {
@@ -205,6 +217,16 @@ def intervention_plan(desert: dict) -> dict:
         ],
         "impact_tier": "medium",
     }
+
+
+def text_match_score(text: str, query: str) -> int:
+    if not query.strip():
+        return 0
+    low = text.lower()
+    tokens = [t for t in re.split(r"\W+", query.lower()) if len(t) > 2]
+    if not tokens:
+        return 0
+    return sum(1 for t in tokens if t in low)
 
 
 def validate_results(results: list, candidates_text: str, query: str) -> list:
@@ -289,6 +311,15 @@ class WhatIfRequest(BaseModel):
     district: str
     capability: str
     facilities_added: int = 1
+
+
+class MapSearchRequest(BaseModel):
+    query: str = ""
+    capability: str = "any"
+    state: str = ""
+    district: str = ""
+    pin: str = ""
+    limit: int = 50
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -410,9 +441,20 @@ Detect medical_desert if NO facility genuinely handles the need.""")
             )
             semantic_rank_score = max(0, 100 - idx * 7)
             pin_bonus = 8 if req.location_pin and req.location_pin == r.get("pin_code", "") else 0
+            distance_proxy = pin_distance(req.location_pin, r.get("pin_code", "")) if req.location_pin else 0
+            travel_score = max(0, 100 - min(100, distance_proxy / 500))
             r["blended_rank_score"] = int(round(
-                0.55 * r["trust_score"] + 0.20 * completeness + 0.20 * semantic_rank_score + pin_bonus
+                0.50 * r["trust_score"] + 0.20 * completeness + 0.18 * semantic_rank_score + 0.12 * travel_score + pin_bonus
             ))
+            r["distance_proxy"] = distance_proxy
+            r["estimated_travel_minutes"] = int(max(15, min(360, distance_proxy / 50))) if req.location_pin else None
+            r["evidence_drilldown"] = {
+                "why_recommended": r.get("why_recommended", ""),
+                "trust_reason": r.get("trust_reason", ""),
+                "flags": r.get("flags", []),
+                "capability_matrix": r.get("capability_matrix", {}),
+                "source_excerpt": source_doc[:1200],
+            }
 
         top.sort(key=lambda x: x.get("blended_rank_score", 0), reverse=True)
 
@@ -672,6 +714,71 @@ def what_if_simulator(req: WhatIfRequest):
             "Projection is directional and should be validated with geospatial demand data.",
         ],
     }
+
+
+@app.post("/api/map-search")
+def map_search(req: MapSearchRequest):
+    """Search-engine style retrieval for map exploration and filtering."""
+    col = get_collection()
+    total = col.count()
+    if total == 0:
+        return {"results": [], "total": 0, "error": "Database empty"}
+
+    fetch_n = min(max(req.limit * 20, 400), total)
+    rows = col.get(limit=fetch_n, include=["documents", "metadatas"])
+    docs = rows.get("documents", [])
+    metas = rows.get("metadatas", [])
+
+    capability_key = (req.capability or "any").lower().strip()
+    out = []
+    for doc, meta in zip(docs, metas):
+        state = str(meta.get("state", "") or "")
+        district = str(meta.get("district", "") or "")
+        pin = str(meta.get("pin_code", "") or "")
+        if req.state and req.state.lower() not in state.lower():
+            continue
+        if req.district and req.district.lower() not in district.lower():
+            continue
+        if req.pin and req.pin != pin:
+            continue
+
+        cap_matrix = assess_capabilities_from_text(doc)
+        if capability_key != "any":
+            status = cap_matrix.get(capability_key, {}).get("status", "missing")
+            if status == "missing":
+                continue
+
+        txt_score = text_match_score(doc, req.query)
+        completeness = data_completeness_from_doc(doc)
+        cap_bonus = 12 if capability_key != "any" and cap_matrix.get(capability_key, {}).get("status") == "present" else 0
+        score = int(round(0.55 * completeness + 8 * txt_score + cap_bonus))
+
+        lat = meta.get("latitude", "")
+        lng = meta.get("longitude", "")
+        try:
+            lat_f = float(lat)
+            lng_f = float(lng)
+            if not (-90 <= lat_f <= 90 and -180 <= lng_f <= 180):
+                lat_f, lng_f = None, None
+        except Exception:
+            lat_f, lng_f = None, None
+
+        out.append({
+            "facility_name": meta.get("facility_name", "Unknown"),
+            "state": state,
+            "district": district,
+            "pin_code": pin,
+            "latitude": lat_f,
+            "longitude": lng_f,
+            "search_score": score,
+            "data_completeness": completeness,
+            "capability_matrix": cap_matrix,
+            "source_excerpt": (doc or "")[:700],
+        })
+
+    out.sort(key=lambda x: x.get("search_score", 0), reverse=True)
+    sliced = out[: max(1, min(req.limit, 200))]
+    return {"results": sliced, "total": len(sliced), "capability": capability_key}
 
 
 @app.get("/api/demo-mode")
