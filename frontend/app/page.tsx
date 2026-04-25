@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Search, MapPin, AlertTriangle, Shield, ChevronDown,
   Loader2, Activity, Brain, BarChart3, ExternalLink,
@@ -228,7 +228,7 @@ function FacilityCard({ result, index }: { result: FacilityResult; index: number
               📌 JUSTIFICATION (exact quote)
             </p>
             <p style={{ fontSize: 13, color: '#bae6fd', fontStyle: 'italic', lineHeight: 1.5 }}>
-              "{result.why_recommended}"
+              &quot;{result.why_recommended}&quot;
             </p>
           </div>
 
@@ -283,6 +283,15 @@ export default function HomePage() {
   const [result, setResult] = useState<AgentResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'results' | 'map'>('results')
+  const [mapSrc, setMapSrc] = useState('/api/map-file')
+
+  const loadMap = () => {
+    setMapSrc(`/api/map-file?t=${Date.now()}`)
+  }
+
+  useEffect(() => {
+    loadMap()
+  }, [])
 
   const handleQuery = async (q: string = query) => {
     if (!q.trim()) return
@@ -303,6 +312,7 @@ export default function HomePage() {
       }
       const data = await res.json()
       setResult(data)
+      loadMap()
       setActiveTab('results')
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'An unexpected error occurred')
@@ -586,7 +596,7 @@ export default function HomePage() {
                     🗺️ Medical Desert Map
                   </h2>
                   <a
-                    href="/api/map/preview"
+                    href={mapSrc}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center gap-2"
@@ -602,7 +612,7 @@ export default function HomePage() {
                 </div>
                 <div className="map-frame" style={{ height: 500 }}>
                   <iframe
-                    src="/api/map/preview"
+                    src={mapSrc}
                     width="100%"
                     height="100%"
                     style={{ border: 'none' }}
@@ -611,7 +621,7 @@ export default function HomePage() {
                 </div>
                 <p style={{ fontSize: 12, color: '#64748b', marginTop: 12, textAlign: 'center' }}>
                   Generate a fresh map by posting to{' '}
-                  <code style={{ color: '#60a5fa' }}>POST /api/map</code> with agent findings.
+                  <code style={{ color: '#60a5fa' }}>GET /api/generate-map</code> before loading this view.
                 </p>
               </div>
             )}

@@ -11,6 +11,7 @@ import os, json, re, math
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import anthropic
 import chromadb
@@ -26,6 +27,10 @@ app.add_middleware(
     allow_origins=["*"], allow_credentials=True,
     allow_methods=["*"], allow_headers=["*"],
 )
+
+frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend")
+if os.path.isdir(frontend_dir):
+    app.mount("/app", StaticFiles(directory=frontend_dir, html=True), name="frontend")
 
 mlflow.set_experiment("healthcare-agent")
 
@@ -192,12 +197,22 @@ def query_facilities(req: QueryRequest):
         # Semantic search
         try:
             col = get_collection(demo=req.demo)
+            total = col.count()
+            if total == 0:
+                raise RuntimeError("Vector collection is empty.")
             results = col.query(
                 query_texts=[req.query],
-                n_results=min(req.top_k, col.count()),
+                n_results=min(req.top_k, total),
             )
         except Exception as e:
-            raise HTTPException(503, f"Vector DB error: {e}. Run load_data.py first.")
+            return {
+                "query": req.query,
+                "top_results": [],
+                "chain_of_thought": "Database not ready. Run load_data.py first.",
+                "medical_desert": {"detected": False},
+                "summary": str(e),
+                "error": True,
+            }
 
         # Build candidate text
         candidates = ""
@@ -260,12 +275,29 @@ Detect medical_desert if NO facility genuinely handles the need."""}],
         # P2: Validator Agent
         top = validate_results(top, candidates, req.query)
 
+        # Keep trust_score stable for UI and scoring.
+        for r in top:
+            score = r.get("trust_score", 50)
+            try:
+                score = int(round(float(score)))
+            except Exception:
+                score = 50
+            r["trust_score"] = max(0, min(100, score))
+
         # P7: Confidence intervals
         top = add_confidence_intervals(top)
 
         data["top_results"] = top
         data["query"] = req.query
         data["candidates_retrieved"] = len(results["documents"][0])
+        data.setdefault("chain_of_thought", "")
+        data.setdefault("summary", "")
+        data.setdefault(
+            "medical_desert",
+            {"detected": False, "region": "", "gap": "", "severity": "medium"},
+        )
+        # Backward-compat for current frontend key.
+        data["medical_desert_alert"] = data["medical_desert"]
 
         # MLflow metrics
         mlflow.log_metric("results_count", len(top))
@@ -320,6 +352,12 @@ Return ONLY JSON:
     # P7: confidence interval
     flags = result.get("flags", [])
     score = result.get("trust_score", 50)
+    try:
+        score = int(round(float(score)))
+    except Exception:
+        score = 50
+    score = max(0, min(100, score))
+    result["trust_score"] = score
     margin = 20 if len(flags) > 2 else 10 if len(flags) == 1 else 5
     result["trust_min"] = max(0, score - margin)
     result["trust_max"] = min(100, score + margin)

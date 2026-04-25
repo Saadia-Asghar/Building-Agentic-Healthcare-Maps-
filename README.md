@@ -57,7 +57,8 @@ Place `VF_Hackathon_Dataset_India_Large.xlsx` in the `data/` folder.
 
 ```bash
 cd backend
-python data_loader.py
+python warmup.py
+python load_data.py --file ../data/VF_Hackathon_Dataset_India_Large.xlsx
 ```
 
 This embeds all 10,000 facility records into ChromaDB (~10-15 minutes).

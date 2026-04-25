@@ -43,6 +43,14 @@ def get_col(row: dict, key: str, df_columns: list) -> str:
 def main(excel_path: str):
     print(f"Loading {excel_path} ...")
     df = pd.read_excel(excel_path)
+    print("\n=== YOUR ACTUAL COLUMNS ===")
+    for col in df.columns:
+        print(f"  '{col}'")
+    print("\n=== FIRST ROW SAMPLE ===")
+    print(df.iloc[0].to_dict())
+    print("===========================\n")
+    input("Press ENTER to continue with embedding, or CTRL+C to stop and fix columns first...")
+
     print(f"[OK] Loaded {len(df):,} rows")
     print(f"[INFO] Columns: {list(df.columns)}\n")
 
@@ -53,11 +61,10 @@ def main(excel_path: str):
         model_name="all-MiniLM-L6-v2"
     )
 
-    try:
+    existing = [c.name for c in client.list_collections()]
+    if "healthcare_facilities" in existing:
         client.delete_collection("healthcare_facilities")
-        print("[WARN] Deleted existing collection - re-embedding.\n")
-    except Exception:
-        pass
+        print("Cleared existing collection.\n")
 
     col = client.create_collection(
         name="healthcare_facilities",
